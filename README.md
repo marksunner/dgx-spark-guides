@@ -14,7 +14,7 @@ The switch side of an RDMA fabric. If you're connecting more than two Sparks, yo
 
 ## Standing on Shoulders
 
-The GLM deployment is built directly on **[tonyd2wild's QuantTrio recipe](https://github.com/tonyd2wild/GLM-5.2-QuantTrio-200K-4x-DGX-Spark)** — a meticulous, battle-tested foundation that itself credits a whole community of DGX Spark pioneers. What these guides add is the road *around* the recipe: provisioning, networking, and the debugging journey. Full credits are in the deployment guide.
+The GLM deployment is built directly on **[tonyd2wild's QuantTrio recipe](https://github.com/tonyd2wild/GLM-5.2-QuantTrio-200K-4x-DGX-Spark)** — a meticulous, battle-tested foundation that itself credits a whole community of DGX Spark pioneers. What these guides add is the road *around* the recipe: provisioning, networking, and our personal debugging journey. Full credits are in the deployment guide.
 
 ## Contributing
 
