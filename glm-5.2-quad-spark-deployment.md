@@ -1107,6 +1107,70 @@ Our own initial numbers: ~2 s to first token, single-stream throughput approachi
 
 ---
 
+## Power Loss & Recovery
+
+### Remote Hands, Carbon-Based Doofuses, and the Unplugged UPS
+
+Here's a true story. Three hours after our cluster reached production, someone (in the middle of a cable management session) unplugged the UPS powering all four nodes and the QSFP switch. Then forgot to plug it back in. Everything went dark.
+
+This is not a hypothetical. It's an instruction: somebody, at some point, will accidentally power-cycle your cluster. When it happens, here's what to expect, what breaks, and what doesn't.
+
+### What Survived
+
+All four Sparks booted clean. SSH came back. The QSFP fabric came up (pings passed, MAC tables populated). Docker was healthy. The model weights, kernels, image, and launch script were all intact. NetworkManager's `cluster-link` connections re-activated with MTU 9000 preserved. InfiniBand device files were present.
+
+### What Didn't
+
+The cluster refused to initialise. NCCL hit `WorkerProc initialization failed` during `init_worker_distributed_environment` — no error message, no obvious clue, just a silent crash. The switch was forwarding traffic, ping worked, but RDMA wouldn't start.
+
+### The GID Table Trap
+
+**The RoCE GID table on DGX Spark is NOT stable across reboots.**
+
+After a power cycle, each node's ConnectX-7 NIC rebuilds its GID table from scratch. The entries themselves don't change — the same fabric IP maps to the same GID value — but the *index* that entry occupies in the table can shift. On our cluster, all four nodes' IPv4-mapped entries moved to index 5 after the reboot. One node had previously been at index 3.
+
+Our launch script had the old index hardcoded in `NCCL_GID_INDEX=(5 5 5 3)`. NCCL tried to read index 3 on the shifted node, found a link-local entry, and failed silently. Exactly the kind of failure that consumes an afternoon if you don't know where to look.
+
+### Why the Switch Wasn't the Problem
+
+The MikroTik CRS812 *did* survive the power loss with its config intact — RouterOS saves configuration to flash when you run `/system backup save`, and the RoCE QoS settings (PFC, ECN, port speed, MTU 9000) all persisted. The fact that the switch was forwarding traffic at all — ARP tables populated, pings working — was the clue. The problem was at the NIC driver level on the Sparks, not in the switch.
+
+### Diagnosis
+
+```bash
+# For each node, check where the IPv4-mapped RoCE v2 GID actually lives:
+ibv_devinfo -v roceP2p1s0f1 | grep "GID\[" | grep "::ffff:"
+# Should see something like:
+#   GID[  5]:    ::ffff:10.0.0.1, RoCE v2
+```
+
+The number in brackets is that node's *actual* `NCCL_IB_GID_INDEX`. If it doesn't match what's in your launch script, NCCL will fail.
+
+### Recovery
+
+We've provided a zero-dependency pre-flight script that automates this. It checks every node's RoCE v2 GID index and compares against `launch-castle.sh`. If the indices have shifted (as they will after any reboot), `--fix` updates the launch script automatically.
+
+```bash
+./preflight.sh          # Check — prints findings
+./preflight.sh --fix    # Check + auto-update launch-castle.sh
+./launch-castle.sh      # Then launch as normal
+```
+
+The script is in this repository as [`preflight.sh`](preflight.sh). It has no dependencies beyond `bash`, `ssh`, and `ibv_devinfo` (all present on a stock DGX Spark). Edit the config block at the top to match your cluster, and fold the two commands into your startup routine:
+
+```bash
+./preflight.sh --fix && ./launch-castle.sh
+```
+
+### What We Learned
+
+1. **GID indices are ephemeral, not hardware-stable.** Verify them after every reboot.
+2. **A working switch (pings pass, MACs visible) does NOT mean RDMA will work.** NCCL is picky about which GID entry it points at.
+3. **Save the MikroTik config:** `/system backup save` after any RouterOS change. Ours DID survive, which narrowed the diagnosis dramatically.
+4. **The preflight script is worth more than the launch script.** Without it, this failure mode is a multi-hour debugging session. With it, it's `./preflight.sh --fix` and a shrug.
+
+---
+
 ## Quick Reference
 
 ### Pre-Launch Checklist
