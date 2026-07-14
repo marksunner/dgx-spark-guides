@@ -123,11 +123,11 @@ The rule: **one change per relaunch, soak-tested with 10+ real requests before t
 | Step 0 | + #48572 patches + `CUDA_DEVICE_MAX_CONNECTIONS=32` | ~15.3 tok/s | ✅ Stable |
 | Step 1 | `cudagraph_mode` → `FULL_DECODE_ONLY` | **~23.7 tok/s** | ✅ Stable |
 | Step 2 | + `hf-overrides` with `index_topk_pattern` | ~22.6 tok/s | ✅ Stable |
-| Step 3 | + `--async-scheduling` restored | **~22.7 tok/s** | ✅ Stable |
+| Step 3 | + `--async-scheduling` restored | ~22.7 tok/s | ⚠️ Passed 10-req test, **deadlocked on extended soak** |
 
 **The key insight is Step 1: `FULL_DECODE_ONLY` is the sweet spot.** It captures cudagraphs for pure-decode steps — where shapes are regular and Python re-entry overhead hurts most — while falling back to eager execution for mixed prefill-decode steps, which is exactly where MTP's shape diversity causes rank desync. You dodge the FULL/FULL_AND_PIECEWISE dispatch divergence that caused the deadlock while recovering roughly 60% of the throughput lost by dropping to PIECEWISE.
 
-Restoring `--async-scheduling` (Step 3) is safe **only after** the #48572 patches are in place — the July 7 slot-leak fix (#47928) plus the two #48572 fixes remove the known GLM-5.2 MTP async races. If you can't apply the patches, stop at Step 2.
+**⚠️ Step 3 warning:** restoring `--async-scheduling` passed our initial 10-request test but **deadlocked on extended soak** (~2 hours). The async+MTP bugs ([#40610](https://github.com/vllm-project/vllm/issues/40610), [#46669](https://github.com/vllm-project/vllm/issues/46669)) remain unfixed upstream. **We recommend stopping at Step 2** — the ~1 tok/s gain from async-scheduling is not worth the stability risk. Keep `--async-scheduling` removed until these issues are resolved in a future vLLM release.
 
 ## Final Recommended Config
 
@@ -143,7 +143,7 @@ export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=600
 # EDIT: substitute your own model path, node addresses, and rank args
 vllm serve <MODEL_PATH> \
   --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
-  --async-scheduling \
+  # --async-scheduling              # DO NOT ENABLE — deadlocks on extended soak (see ladder)
   --speculative-config '{"method":"mtp","num_speculative_tokens":4,"attention_backend":"FLASHMLA_SPARSE"}' \
   --hf-overrides '{"use_index_cache":true,"index_topk_pattern":"FFFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSSFSSS"}' \
   # ...all other args from the base recipe unchanged
@@ -151,7 +151,7 @@ vllm serve <MODEL_PATH> \
 # Plus the #48572 patches applied (bind-mount, or baked into your image).
 ```
 
-**Result: ~23 tok/s single-stream, fully stable.** That's 80% of the theoretical 28.8 tok/s maximum, with zero deadlocks across extended soak testing — GPUs idle cleanly at 0% between requests, and the cluster survives the concurrent and bursty traffic that reliably killed the original config within 5 requests.
+**Result: ~23 tok/s single-stream, fully stable (without `--async-scheduling`).** That's 80% of the theoretical 28.8 tok/s maximum, with zero deadlocks across extended soak testing — GPUs idle cleanly at 0% between requests, and the cluster survives the traffic that reliably killed the original config within 5 requests.
 
 ## Why Not the Full 28.8 tok/s?
 
