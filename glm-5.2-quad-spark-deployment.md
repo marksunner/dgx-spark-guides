@@ -4,6 +4,8 @@
 
 *Four NVIDIA DGX Sparks. One 671-billion-parameter reasoning model. Three days, five build attempts, four genuine bugs, one machine that ate itself under swap pressure, and a 05:12 BST moment when it finally spoke. This is the guide we wish we'd had when the boxes were still full of foam.*
 
+> **Before you launch (note added 18 July 2026).** The serving configuration in this guide reflects the stack as it stood when we wrote it — and that stack's FlashInfer sparse-MLA attention kernels have since been root-caused as the source of the multi-node hangs (an mbarrier livelock on GB10). Before launching, see the **repro of record** in the [RFC #48720 results update](https://github.com/vllm-project/vllm/issues/48720#issuecomment-5010866477): the current configuration routes the *main* model's attention through the Triton sparse-MLA kernels (`--attention-backend FLASHMLA_SPARSE`) — the Triton attention route replaces the flashinfer path this guide's era used. Everything else here — hardware, networking, fabric, build, distribution, the bugs and their fixes — stands as written. Full evidence: [glm52-dgx-spark-deadlock-evidence](https://github.com/marksunner/glm52-dgx-spark-deadlock-evidence).
+
 ---
 
 ## Before Anything Else: Whose Shoulders We're Standing On

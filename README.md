@@ -1,5 +1,7 @@
 # GLM 5.2 on 4× DGX Spark
 
+> **Update — 18 July 2026.** The multi-node deadlock investigated across this repo has since been **root-caused**: a FlashInfer sparse-MLA (`sparse_mla_sm120`) **mbarrier livelock on GB10** — one kernel block spin-waiting forever on a barrier phase that never arrives, everything else piling up behind it — with a **validated one-flag workaround** (route the main model's attention to the Triton sparse-MLA kernels via `--attention-backend FLASHMLA_SPARSE`). The full evidence — cuda-gdb captures, RAS dumps, 500 consecutive clean ceiling sessions — lives in **[glm52-dgx-spark-deadlock-evidence](https://github.com/marksunner/glm52-dgx-spark-deadlock-evidence)**, and the write-up is the **[RFC #48720 results update](https://github.com/vllm-project/vllm/issues/48720#issuecomment-5010866477)**. The documents below are preserved as written — they record the investigation as it actually unfolded — with the new evidence as the final word.
+
 *The complete journey from unboxing to first inference — 671B parameters, all 256 experts, 200K context, MTP speculative decoding, ~26 tok/s. Built on [tonyd2wild's QuantTrio recipe](https://github.com/tonyd2wild/GLM-5.2-QuantTrio-200K-4x-DGX-Spark). Three days, four bugs, one UPS incident, and a haiku.*
 
 → For all DGX Spark work (other models, benchmarks, comparisons), see **[dgx-spark](https://github.com/marksunner/dgx-spark)**.
@@ -22,6 +24,15 @@ Field report: diagnosing and fixing a reproducible NCCL deadlock with MTP specul
 
 ### 🛡️ [preflight.sh](preflight.sh)
 Pre-launch GID index validator. The RoCE GID table shifts after a reboot; this script catches it before NCCL fails silently. Run `./preflight.sh --fix && ./launch-castle.sh` after any power cycle.
+
+### 🧪 [Deadlock Evidence Repo](https://github.com/marksunner/glm52-dgx-spark-deadlock-evidence)
+The verdict to the analysis above. cuda-gdb captures of the live kernel livelock, per-rank RAS op-count dumps, stall dossiers, and the soak statistics — 500 consecutive clean ceiling sessions on the Triton attention route — behind the [RFC #48720 results update](https://github.com/vllm-project/vllm/issues/48720#issuecomment-5010866477). If the deadlock analysis is the investigation, this is the closing evidence.
+
+### 🪶 [baton-pass](https://github.com/marksunner/baton-pass)
+The handoff discipline that kept a multi-day, multi-session debugging campaign coherent: self-briefs, a campaign ledger, one variable per relaunch, receipts for everything. The method behind the documents above.
+
+### 🛰️ [spark-stability-sentry](https://github.com/marksunner/spark-stability-sentry)
+The watchdog and failover stack from the campaign, packaged as a standalone field kit: wedge detection (the 96%-util spin signature), evidence capture *before* any exit path runs, restart budgets, and incident bundling. Detect and recover, not prevent — the two underlying platform bugs remain open.
 
 ---
 
